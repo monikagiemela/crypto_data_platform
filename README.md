@@ -1,34 +1,41 @@
 ## Bitcoin Real-Time Data Pipeline
 This project demonstrates a complete, end-to-end data engineering pipeline using Docker. It simulates a real-time stream of Bitcoin data, processes it in batches and streams with Spark, stores it in a data lake (MinIO) and a data warehouse (Postgres), and visualizes the results in a Superset dashboard that loads automatically.
 
+### Dashboard Preview
+
+Here is the final dashboard, which loads automatically on startup:
+![alt text](image.png)
+
 ### Architecture
 This pipeline follows a "Bronze" (raw) and "Gold" (aggregated) layer architecture.
-1. Producer: A Python script (`producer.py`) reads a historical Bitcoin CSV file and simulates a live data stream. It sends one data point (a 1-minute record) to a Kafka topic (`bitcoin_data`) every 0.1 seconds
-2. Ingestion (Spark Stream - "Bronze" Layer):
+#### 1. Producer:
+- A Python script (`producer.py`) reads a historical Bitcoin CSV file and simulates a live data stream.
+- It sends one data point (a 1-minute record) to a Kafka topic (`bitcoin_data`) every 0.1 seconds
+#### 2. Ingestion (Spark Stream - "Bronze" Layer):
 - The spark-processor service runs a continuous streaming job (`spark_streaming.py`).
 - This job reads from the `bitcoin_data` Kafka topic.
 - It casts data types, cleans the data, and writes it as raw Parquet files (partitioned by date) into a MinIO bucket: `streaming_raw`.
-3. Aggregation (Spark Batch - "Gold" Layer):
-- The same s`park-processor` service runs a second job (`spark_batch.py`) in a 1-minute loop.
+#### 3. Aggregation (Spark Batch - "Gold" Layer):
+- The same `spark-processor` service runs a second job (`spark_batch.py`) in a 1-minute loop.
 - This batch job reads the "Bronze" data from MinIO, applying an efficient "lookback" to process only new data.
 - It calculates 5-minute, 10-minute, and 30-minute moving averages and volatility for each row using Spark Window functions (this prevents data duplication).
 - It appends this new, enriched "Gold" data to two places:
     1. Postgres: A table named `bitcoin_gold_data` (for fast dashboarding).
     2. MinIO: A bucket named `gold_aggregates` (for analytics and backup).
-4. Visualization (Superset):
+#### 4. Visualization (Superset):
 - The `superset` service starts and automatically connects to the Postgres database.
 - On its first run, it executes an initialization script (`init_superset.sh`) that:
     1. Creates the admin user (`admin`/`admin`).Programmatically creates the database connection to your `crypto_db`.
     2. Imports a pre-built dashboard and all its charts from the my_dashboard_export.zip file.
 
 ### How to Run
+#### 1. Clone the Repository:
 ```
-1. Clone the Repository:
-git clone <your-repo-url>
-cd <your-repo-name>
+git clone <this-repo-url-http-or-ssh>
+cd crypto_data_platform
 ```
 
-2. Set Script Permissions (One-Time Setup):You must tell Git to track the executable permissions for the Postgres init script.
+#### 2. Set Script Permissions (One-Time Setup): You must tell Git to track the executable permissions for the Postgres init script.
 ```
 # Add the file to Git
 git add postgres-multiple-db.sh
@@ -37,15 +44,20 @@ git add postgres-multiple-db.sh
 git update-index --chmod=+x postgres-multiple-db.sh
 
 # Commit this change (if you haven't already)
-git commit -m "Set permissions for Postgres init script
+git commit -m "Set permissions for Postgres init script"
 ```
-3. Export Your Dashboard:
+
+#### 3. Export Your Dashboard:
 - This project assumes you have a file named `my_dashboard_export.zip` inside the `superset/` folder.
 - If you haven't created this, you must run the project once, build your dashboard in the UI (following superset/dashboard_plan.md), and export it into that location.
-4. Build and Run the Pipeline:
+
+#### 4. Download Kaggle Bitcoin Hitorical Dataset, unzip it, and paste it in the main directory of the project inside the `data` directory and rename it to `bitcoin_data.csv`:
+`https://www.kaggle.com/api/v1/datasets/download/mczielinski/bitcoin-historical-data`
+
+#### 5. Build and Run the Pipeline:
 `docker compose up --build`
 
-5. Shut Down the Pipeline:
+#### 6. Shut Down the Pipeline:
 To stop all services and remove the data volumes, run:
 `docker compose down -v`
 

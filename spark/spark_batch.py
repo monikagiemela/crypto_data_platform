@@ -1,13 +1,17 @@
 import os
 import logging
-from pyspark.sql import SparkSession, Window
+from pyspark.sql import SparkSession
+# Import the main Window object
+from pyspark.sql import Window as W
 from pyspark.sql.functions import (
-    col, window, avg, stddev, date_format
+    col, avg, stddev, date_format, max as spark_max, lit
 )
 from pyspark.sql.types import (
-    StructType, StructField, StringType, DoubleType, 
+    StructType, StructField, StringType, DoubleType,
     LongType, TimestampType
 )
+# Import timedelta for date math
+from datetime import datetime, timedelta
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,11 +37,15 @@ POSTGRES_PROPERTIES = {
     "password": POSTGRES_PASSWORD,
     "driver": "org.postgresql.Driver"
 }
+GOLD_TABLE_NAME = "bitcoin_gold_data"
+
+# Define our longest lookback window for aggregation
+LONGEST_LOOKBACK_MINUTES = 30
 
 def create_spark_session():
     """Create Spark session with S3A configuration for MinIO"""
     logger.info("Creating Spark session for Batch Aggregation...")
-    
+
     spark = SparkSession.builder \
         .appName("BitcoinBatchAggregator") \
         .config("spark.hadoop.fs.s3a.endpoint", f"http://{MINIO_ENDPOINT}") \
@@ -47,17 +55,62 @@ def create_spark_session():
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
         .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.optimizer.dynamicPartitionPruning.enabled", "true") \
         .getOrCreate()
-    
+
     spark.sparkContext.setLogLevel("WARN")
     logger.info("Spark session created successfully")
     return spark
+
+def get_last_processed_timestamp(spark):
+    """
+    Connects to Postgres and gets the most recent timestamp
+    from the gold table to know where to start processing.
+    """
+    try:
+        # Check if table exists
+        pg_tables = spark.read \
+            .format("jdbc") \
+            .option("url", POSTGRES_URL) \
+            .option("user", POSTGRES_USER) \
+            .option("password", POSTGRES_PASSWORD) \
+            .option("driver", "org.postgresql.Driver") \
+            .option("query", f"SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename  = '{GOLD_TABLE_NAME}')") \
+            .load()
+
+        if not pg_tables.first()["exists"]:
+            logger.warning(f"Table {GOLD_TABLE_NAME} does not exist. Starting from scratch.")
+            return None
+
+        # Table exists, get max timestamp
+        max_ts_df = spark.read \
+            .format("jdbc") \
+            .option("url", POSTGRES_URL) \
+            .option("dbtable", GOLD_TABLE_NAME) \
+            .option("user", POSTGRES_USER) \
+            .option("password", POSTGRES_PASSWORD) \
+            .option("driver", "org.postgresql.Driver") \
+            .load() \
+            .agg(spark_max("Timestamp").alias("max_ts"))
+
+        max_ts = max_ts_df.first()["max_ts"]
+
+        if max_ts:
+            logger.info(f"Last processed timestamp is: {max_ts}")
+            return max_ts
+        else:
+            logger.info("Gold table is empty. Starting from scratch.")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error checking Postgres for last timestamp: {e}")
+        # If we can't read the table, assume we start from scratch
+        return None
 
 def define_parquet_schema():
     """
     Defines the exact schema of the Parquet files being written
     by the spark_streaming.py (Stream 1) job.
-    This prevents the "Unable to infer schema" error on empty directories.
     """
     return StructType([
         StructField("Timestamp", TimestampType(), True),
@@ -71,123 +124,124 @@ def define_parquet_schema():
         StructField("date", StringType(), True) # This is the partition column
     ])
 
-def calculate_window_aggregations(input_df, window_duration, slide_duration):
-    """
-    Calculates aggregations on a BATCH DataFrame.
-    Returns a batch DataFrame with window boundaries and aggregates.
-    """
-    table_suffix = window_duration.replace(" ", "")
-    
-    # We rename the 'window' column immediately to avoid conflicts
-    agg_df = input_df \
-        .groupBy(window(col("Timestamp"), window_duration, slide_duration).alias(f"window_{table_suffix}")) \
-        .agg(
-            avg("Close").alias(f"price_ma_{table_suffix}"),
-            stddev("Close").alias(f"price_volatility_{table_suffix}"),
-            avg("Volume").alias(f"volume_btc_ma_{table_suffix}")
-        )
-    return agg_df
+# We no longer need the calculate_window_aggregations function
+# as we are using analytic functions instead.
 
 def main():
-    logger.info("Starting Gold Table Batch Aggregation Job...")
-    
+    logger.info("Starting Gold Table INCREMENTAL Batch Job...")
+
     spark = create_spark_session()
-    
+
+    # 1. Get the last timestamp we processed from Postgres
+    last_ts = get_last_processed_timestamp(spark)
+
     minio_raw_directory = "streaming_raw"
     minio_input_path = f"s3a://{MINIO_BUCKET}/{minio_raw_directory}"
-    
+
     try:
-        logger.info(f"Reading raw data from {minio_input_path}")
-        
-        # Define the schema manually
         schema = define_parquet_schema()
-        
-        # Read all raw data from MinIO
-        raw_df = spark.read.format("parquet").schema(schema).load(minio_input_path)
-        
+
+        # 2. Read from MinIO with Partition Pruning
+        raw_df_reader = spark.read.format("parquet").schema(schema)
+
+        if last_ts:
+            # We must load data starting from *before* the last timestamp
+            # to correctly calculate aggregates that cross the time boundary.
+            lookback_start_ts = last_ts - timedelta(minutes=LONGEST_LOOKBACK_MINUTES)
+            load_start_date_str = lookback_start_ts.strftime('%Y-%m-%d')
+
+            logger.info(f"Loading data partitioned from date {load_start_date_str} onwards for correct aggregates.")
+
+            # Apply partition filter BEFORE load
+            raw_df = raw_df_reader.load(minio_input_path).filter(col("date") >= lit(load_start_date_str))
+        else:
+            logger.info("Processing all data (first run).")
+            raw_df = raw_df_reader.load(minio_input_path)
+
+        # Cache the loaded data (it's small, just 1-2 days)
+        raw_df.cache()
+
         if raw_df.isEmpty():
-            logger.info("Raw data directory is empty. No data to process. Sleeping.")
+            logger.info("No raw data found in MinIO. Sleeping.")
             spark.stop()
             return
-            
-        # --- OPTIMIZATION START ---
-        # 1. Add "window key" columns to the raw DataFrame.
-        # This lets us use a fast "equi-join" instead of a slow "range-join".
-        logger.info("Generating window keys on raw data...")
-        raw_with_keys = raw_df \
-            .withColumn("window_key_5m", window(col("Timestamp"), "5 minutes", "1 minute")) \
-            .withColumn("window_key_10m", window(col("Timestamp"), "10 minutes", "1 minute")) \
-            .withColumn("window_key_30m", window(col("Timestamp"), "30 minutes", "1 minute"))
-        
-        # 2. Calculate aggregations
-        logger.info("Calculating 5-minute aggregates...")
-        agg_5min_df = calculate_window_aggregations(raw_with_keys, "5 minutes", "1 minute")
-        
-        logger.info("Calculating 10-minute aggregates...")
-        agg_10min_df = calculate_window_aggregations(raw_with_keys, "10 minutes", "1 minute")
 
-        logger.info("Calculating 30-minute aggregates...")
-        agg_30min_df = calculate_window_aggregations(raw_with_keys, "30 minutes", "1 minute")
+        logger.info(f"Loaded {raw_df.count()} rows for lookback.")
 
-        # 3. Join the aggregations using the new keys (Equi-Join)
-        logger.info("Joining raw data with aggregates (using equi-join)...")
-        
-        gold_df = raw_with_keys \
-            .join(
-                agg_5min_df,
-                raw_with_keys["window_key_5m"].start == agg_5min_df["window_5minutes"].start,
-                "left"
-            ) \
-            .join(
-                agg_10min_df,
-                raw_with_keys["window_key_10m"].start == agg_10min_df["window_10minutes"].start,
-                "left"
-            ) \
-            .join(
-                agg_30min_df,
-                raw_with_keys["window_key_30m"].start == agg_30min_df["window_30minutes"].start,
-                "left"
-            )
-        # --- OPTIMIZATION END ---
+        # --- THIS IS THE FIX ---
+        # 3. Define Analytic Window Specifications
+        # We order by Timestamp. Since the data is 1-minute intervals:
+        # 5-min window = current row + 4 preceding rows (total 5 rows)
+        # 10-min window = current row + 9 preceding rows (total 10 rows)
+        # 30-min window = current row + 29 preceding rows (total 30 rows)
 
-        # Select and clean up columns for the final table
-        final_gold_table = gold_df.select(
-            "Timestamp",
-            "date",
-            "Open",
-            "High",
-            "Low",
-            "Close",
-            "Volume",
-            "price_ma_5minutes",
-            "price_volatility_5minutes",
-            "volume_btc_ma_5minutes",
-            "price_ma_10minutes",
-            "price_volatility_10minutes",
-            "volume_btc_ma_10minutes",
-            "price_ma_30minutes",
-            "price_volatility_30minutes",
-            "volume_btc_ma_30minutes"
-        ).orderBy("Timestamp")
+        window_spec_5m = W.orderBy("Timestamp").rowsBetween(-4, W.currentRow)
+        window_spec_10m = W.orderBy("Timestamp").rowsBetween(-9, W.currentRow)
+        window_spec_30m = W.orderBy("Timestamp").rowsBetween(-29, W.currentRow)
 
-        # Write the final table to Postgres, overwriting the old one
-        output_table = "bitcoin_gold_data"
-        logger.info(f"Writing final Gold table to Postgres: {output_table}")
-        
+        # 4. Apply window functions to the ENTIRE loaded DF
+        # This calculates the moving average for every row without duplicates.
+        logger.info("Calculating all moving averages using analytic window functions...")
+
+        gold_df = raw_df \
+            .withColumn("price_ma_5minutes", avg("Close").over(window_spec_5m)) \
+            .withColumn("price_volatility_5minutes", stddev("Close").over(window_spec_5m)) \
+            .withColumn("volume_btc_ma_5minutes", avg("Volume").over(window_spec_5m)) \
+            .withColumn("price_ma_10minutes", avg("Close").over(window_spec_10m)) \
+            .withColumn("price_volatility_10minutes", stddev("Close").over(window_spec_10m)) \
+            .withColumn("volume_btc_ma_10minutes", avg("Volume").over(window_spec_10m)) \
+            .withColumn("price_ma_30minutes", avg("Close").over(window_spec_30m)) \
+            .withColumn("price_volatility_30minutes", stddev("Close").over(window_spec_30m)) \
+            .withColumn("volume_btc_ma_30minutes", avg("Volume").over(window_spec_30m))
+
+        # 5. Filter for ONLY the new rows
+        # These new rows now have their moving averages correctly calculated.
+        if last_ts:
+            final_gold_table = gold_df.filter(col("Timestamp") > lit(last_ts))
+        else:
+            final_gold_table = gold_df
+
+        final_gold_table.cache()
+
+        if final_gold_table.isEmpty():
+            logger.info("No new rows to append after calculation. Sleeping.")
+            spark.stop()
+            return
+
+        logger.info(f"Found {final_gold_table.count()} new rows to write.")
+
+        # 6. Write the NEW data using "append" mode to both sinks
+
+        # --- 6a. Write to MinIO (Gold Parquet) ---
+        minio_gold_directory = "gold_aggregates"
+        minio_gold_path = f"s3a://{MINIO_BUCKET}/{minio_gold_directory}"
+
+        logger.info(f"Appending new Gold table data to MinIO: {minio_gold_path}")
+
         final_gold_table.write \
-            .jdbc(url=POSTGRES_URL, table=output_table, mode="overwrite", 
+            .mode("append") \
+            .partitionBy("date") \
+            .parquet(minio_gold_path)
+
+        # --- 6b. Write to Postgres ---
+        logger.info(f"Appending new Gold table data to Postgres: {GOLD_TABLE_NAME}")
+
+        final_gold_table.write \
+            .jdbc(url=POSTGRES_URL, table=GOLD_TABLE_NAME, mode="append",
                   properties=POSTGRES_PROPERTIES)
-        
-        logger.info("Gold Table Batch Aggregation Job COMPLETED successfully.")
+
+        logger.info("Gold Table Incremental Batch Job COMPLETED successfully.")
 
     except Exception as e:
         logger.error(f"Error in batch aggregation job: {e}")
-        # Check for the "schema not found" error specifically
         if "UNABLE_TO_INFER_SCHEMA" in str(e) or "Path does not exist" in str(e):
              logger.warning("This error is expected if the streaming job hasn't written any data yet. Retrying in 1 minute.")
         else:
              raise # Re-raise other unexpected errors
     finally:
+        # Unpersist the cached dataframes
+        raw_df.unpersist()
+        final_gold_table.unpersist()
         spark.stop()
         logger.info("Spark session stopped")
 

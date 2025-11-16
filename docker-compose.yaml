@@ -89,7 +89,7 @@ services:
     networks:
       - crypto-network
     restart: unless-stopped
-  
+
   spark-processor:
     build:
       context: ./spark
@@ -103,19 +103,19 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # --- Vars for Stream 1 (spark_streaming.py) ---
+      # Vars for Stream 1 (spark_streaming.py)
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: bitcoin_data
       CHECKPOINT_LOCATION: /tmp/spark-checkpoints/ingest # Checkpoint for stream
-      
-      # --- Vars for Stream 2 (spark_batch.py) ---
+
+      # Vars for Stream 2 (spark_batch.py)
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: crypto_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      
-      # --- Vars used by BOTH scripts ---
+
+      # Vars used by BOTH scripts
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
@@ -123,14 +123,10 @@ services:
     networks:
       - crypto-network
     ports:
-      # Map two different host ports to the same container port (4040)
-      # This lets you view the UI for both Spark jobs (whichever is active)
-      # You'll see the streaming job on 4040,
-      # and the batch job will appear on 4041 when it runs.
       - "4040:4040" # Spark UI for the streaming job
       - "4041:4041" # Spark UI for the batch job
     volumes:
-      # Use a single volume for all checkpoints
+      # Single volume for all checkpoints
       - spark-checkpoints:/tmp/spark-checkpoints
     restart: unless-stopped
 
@@ -141,10 +137,12 @@ services:
       POSTGRES_DB: crypto_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      POSTGRES_MULTIPLE_DATABASES: superset
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./postgres-multiple-db.sh:/docker-entrypoint-initdb.d/postgres-multiple-db.sh
     networks:
       - crypto-network
     healthcheck:
@@ -168,21 +166,22 @@ services:
       ENABLE_PROXY_FIX: true
       WTF_CSRF_ENABLED: True
       WTF_CSRF_TIME_LIMIT: 86400
-      SESSION_COOKIE_SAMESITE: None
-      SESSION_COOKIE_SECURE: False
+      SESSION_COOKIE_SAMESITE: 'Lax'
       SUPERSET_LOAD_EXAMPLES: no
+      GENERIC_CHART_AXES: 'true'
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: admin
       ADMIN_EMAIL: admin@superset.com
-      DATABASE_DB: crypto_db
+      DATABASE_DB: superset
       DATABASE_HOST: postgres
       DATABASE_PASSWORD: postgres
       DATABASE_USER: postgres
       DATABASE_PORT: 5432
-      SQLALCHEMY_DATABASE_URI: postgresql://postgres:postgres@postgres:5432/crypto_db
+      SQLALCHEMY_DATABASE_URI: postgresql://postgres:postgres@postgres:5432/superset
     volumes:
       - superset-data:/app/superset_home
       - ./superset/init_superset.sh:/app/init_superset.sh
+      - ./superset/my_dashboard_export.zip:/app/my_dashboard_export.zip
     networks:
       - crypto-network
     command: ["/bin/sh", "-c", "sh /app/init_superset.sh && superset run -h 0.0.0.0 -p 8088 --with-threads --reload --debugger"]

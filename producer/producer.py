@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import requests
 import pandas as pd
 from kafka import KafkaProducer
 from kafka.errors import NoBrokersAvailable
@@ -61,10 +62,10 @@ def load_bitcoin_data(file_path):
 def produce_messages(producer, topic, data_df, delay=0.1):
     """Produce messages to Kafka one row at a time"""
     logger.info(f"Starting to stream {len(data_df)} messages to topic '{topic}'")
-    
+
     current_date = None
     message_count = 0
-    
+
     for idx, row in data_df.iterrows():
         try:
             # Track date changes
@@ -75,16 +76,16 @@ def produce_messages(producer, topic, data_df, delay=0.1):
                 current_date = row_date
                 message_count = 0
                 logger.info(f"Starting to stream date: {current_date}")
-            
+
             # Convert row to dictionary, handling NaN values
             message = row.drop('date').to_dict()
-            message = {k: (None if pd.isna(v) else float(v) if isinstance(v, (int, float)) else v) 
+            message = {k: (None if pd.isna(v) else float(v) if isinstance(v, (int, float)) else v)
                       for k, v in message.items()}
-            
+
             # Add metadata
             message['event_time'] = message['Timestamp']
             message['producer_time'] = time.time()
-            
+
             # Send to Kafka
             future = producer.send(topic, value=message)
             future.get(timeout=10)
@@ -92,14 +93,14 @@ def produce_messages(producer, topic, data_df, delay=0.1):
             if message_count % 100 == 0:
                 logger.debug(f"Streamed {message_count} messages for date {current_date}")
             time.sleep(delay)
-            
+
         except Exception as e:
             logger.error(f"Error producing message at index {idx}: {e}")
             continue
-    
+
     if current_date:
         logger.info(f"Finished streaming date: {current_date} ({message_count} messages)")
-    
+
     logger.info(f"Finished streaming all {len(data_df)} messages")
 
 
@@ -109,27 +110,27 @@ def main():
     topic = os.getenv('KAFKA_TOPIC', 'bitcoin_data')
     data_file = os.getenv('DATA_FILE', '/data/bitcoin_data.csv')
     delay = float(os.getenv('PRODUCER_DELAY', '0.1'))
-    
+
     logger.info("Bitcoin Data Producer Starting...")
     logger.info(f"Kafka Servers: {kafka_servers}")
     logger.info(f"Topic: {topic}")
     logger.info(f"Data File: {data_file}")
     logger.info(f"Delay: {delay}s per message")
-    
+
     # Connect to Kafka
     producer = connect_to_kafka(kafka_servers)
-    
+
     # Load data
     bitcoin_df = load_bitcoin_data(data_file)
-    
+
     try:
         # Produce messages
         produce_messages(producer, topic, bitcoin_df, delay)
-        
+
         # Keep producer alive for a bit to ensure all messages are sent
         logger.info("Waiting for final messages to be delivered...")
         time.sleep(5)
-        
+
     except KeyboardInterrupt:
         logger.info("Producer interrupted by user")
     except Exception as e:

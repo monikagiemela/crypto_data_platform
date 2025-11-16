@@ -6,6 +6,29 @@ This project demonstrates a complete, end-to-end data engineering pipeline using
 Here is the final dashboard, which loads automatically on startup:
 ![alt text](image.png)
 
+### Project Structure
+```
+.
+├── images/
+│   └── dashboard_preview.png
+├── producer/
+│   ├── producer.py
+│   ├── requirements.txt
+│   ├── Dockerfile
+├── spark/
+│   ├── spark_streaming.py
+│   ├── spark_batch.py
+│   ├── entrypoint.sh
+│   └── Dockerfile
+├── superset/
+│   ├── init_superset.sh
+│   └── my_dashboard_export.zip
+├── docker-compose.yaml
+├── postgres-multiple-db.sh
+└── README.md
+```
+
+
 ### Architecture
 This pipeline follows a "Bronze" (raw) and "Gold" (aggregated) layer architecture.
 #### 1. Producer:

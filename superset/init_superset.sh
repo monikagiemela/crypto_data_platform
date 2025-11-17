@@ -1,5 +1,5 @@
 #!/bin/bash
-sleep 10  # Wait for the database to be ready"
+sleep 10  # Wait for the database to be ready
 superset db upgrade
 superset fab create-admin \
   --username "${ADMIN_USERNAME:-admin}" \
@@ -13,7 +13,7 @@ superset set_database_uri \
   -d "Bitcoin Analytics DB" \
   -u "postgresql://postgres:postgres@postgres:5432/crypto_db" || true
 echo "Database connection set."
-
+sleep 5
 echo "Importing custom dashboards..."
 superset import-dashboards \
   -p /app/my_dashboard_export.zip \

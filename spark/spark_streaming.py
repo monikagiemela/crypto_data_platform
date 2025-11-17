@@ -29,7 +29,7 @@ CHECKPOINT_LOCATION = os.getenv("CHECKPOINT_LOCATION", "/tmp/spark-checkpoints/i
 def create_spark_session():
     """Create Spark session with S3A configuration for MinIO"""
     logger.info("Creating Spark session for KAFKA->MINIO Stream...")
-    
+
     spark = SparkSession.builder \
         .appName("BitcoinStreamIngest") \
         .config("spark.hadoop.fs.s3a.endpoint", f"http://{MINIO_ENDPOINT}") \
@@ -41,7 +41,7 @@ def create_spark_session():
         .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_LOCATION) \
         .config("spark.sql.adaptive.enabled", "false") \
         .getOrCreate()
-    
+
     spark.sparkContext.setLogLevel("WARN")
     logger.info("Spark session created successfully")
     return spark
@@ -65,7 +65,7 @@ def define_schema():
 def read_from_kafka(spark, kafka_servers, topic):
     """Read streaming data from Kafka"""
     logger.info(f"Reading from Kafka topic: {topic}")
-    
+
     df = spark.readStream \
         .format("kafka") \
         .option("kafka.bootstrap.servers", kafka_servers) \
@@ -73,7 +73,7 @@ def read_from_kafka(spark, kafka_servers, topic):
         .option("startingOffsets", "earliest") \
         .option("failOnDataLoss", "false") \
         .load()
-    
+
     return df
 
 def process_raw_stream(df, schema):
@@ -85,11 +85,11 @@ def process_raw_stream(df, schema):
     4. Add date for partitioning
     """
     logger.info("Setting up RAW stream processing (Kafka -> MinIO)...")
-    
+
     parsed_df = df.select(
         from_json(col("value").cast("string"), schema).alias("data")
     ).select("data.*")
-    
+
     # Cast to correct types
     typed_df = parsed_df.withColumn(
         "Timestamp",
@@ -99,15 +99,15 @@ def process_raw_stream(df, schema):
      .withColumn("Low", col("Low").cast(DoubleType())) \
      .withColumn("Close", col("Close").cast(DoubleType())) \
      .withColumn("Volume", col("Volume").cast(DoubleType()))
-    
+
     filtered_df = typed_df.where(
         col("Timestamp").isNotNull() &
         col("Close").isNotNull() &
         col("Volume").isNotNull()
     )
-    
+
     final_raw_df = filtered_df.withColumn("date", date_format(col("Timestamp"), "yyyy-MM-dd"))
-    
+
     return final_raw_df
 
 def write_raw_to_minio(batch_df, batch_id, output_path):
@@ -135,7 +135,7 @@ def ensure_minio_path_exists(endpoint, access_key, secret_key, bucket, path):
     Uses boto3 to create an S3 path (object) to ensure the "directory" exists
     before Spark tries to read from it.
     """
-    full_path_key = f"{path}/" 
+    full_path_key = f"{path}/"
     logger.info(f"Ensuring MinIO path s3a://{bucket}/{full_path_key} exists using boto3...")
     try:
         client = boto3.client(
@@ -152,23 +152,23 @@ def ensure_minio_path_exists(endpoint, access_key, secret_key, bucket, path):
             logger.warning(f"Path {full_path_key} does not exist. Creating it...")
             client.put_object(Bucket=bucket, Key=full_path_key, Body='')
             logger.info(f"Path {full_path_key} created successfully.")
-            
+
     except Exception as e:
         logger.error(f"Could not check or create MinIO path. Error: {e}")
         raise
 
 def main():
     logger.info("Bitcoin Spark Streaming Ingest Starting...")
-    
+
     spark = create_spark_session()
     schema = define_schema()
-    
+
     kafka_df = read_from_kafka(spark, KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC)
     raw_processed_df = process_raw_stream(kafka_df, schema)
-    
+
     minio_raw_directory = "streaming_raw"
     minio_output_path = f"s3a://{MINIO_BUCKET}/{minio_raw_directory}"
-    
+
     # Ensure the path exists BEFORE starting the stream.
     # This is for the batch job that might run before this stream writes.
     ensure_minio_path_exists(
@@ -178,15 +178,15 @@ def main():
         MINIO_BUCKET,
         minio_raw_directory
     )
-    
+
     query = raw_processed_df.writeStream \
         .foreachBatch(lambda batch_df, batch_id: write_raw_to_minio(batch_df, batch_id, minio_output_path)) \
         .option("checkpointLocation", CHECKPOINT_LOCATION) \
-        .trigger(processingTime="30 seconds") \
+        .trigger(processingTime="5 seconds") \
         .start()
-    
+
     logger.info(f"Started Stream 1: Raw Kafka -> MinIO ({minio_output_path})")
-    
+
     try:
         query.awaitTermination()
     except KeyboardInterrupt:

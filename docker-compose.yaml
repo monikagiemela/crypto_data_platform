@@ -84,6 +84,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: bitcoin_data
       DATA_FILE: /data/bitcoin_data.csv
+      PRODUCER_DELAY: 0.01
     volumes:
       - ./data:/data
     networks:
@@ -167,6 +168,7 @@ services:
       WTF_CSRF_ENABLED: True
       WTF_CSRF_TIME_LIMIT: 86400
       SESSION_COOKIE_SAMESITE: 'Lax'
+      SESSION_COOKIE_SECURE: False
       SUPERSET_LOAD_EXAMPLES: no
       GENERIC_CHART_AXES: 'true'
       ADMIN_USERNAME: admin

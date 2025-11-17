@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # STREAMING JOB
-
 # 1. Start the streaming ingest job (spark_streaming.py) in the background
 echo "Starting Spark streaming ingest job (spark_streaming.py) in the background..."
 /opt/spark/bin/spark-submit --master local[*] /app/spark_streaming.py &
@@ -15,12 +14,11 @@ echo "Waiting 15 seconds for streaming job to initialize..."
 sleep 15
 
 # BATCH JOB LOOP
-
 # 3. Start the batch aggregation job (spark_batch.py) in a loop
 echo "Starting Spark batch aggregation loop (spark_batch.py)..."
 while true; do
 
-  # 4. ROBUSTNESS CHECK: Check if the streaming job (by its PID) is still running
+  # 4. Check if the streaming job (by its PID) is still running
   if ! kill -0 $STREAMING_JOB_PID > /dev/null 2>&1; then
     echo "--- ERROR: Streaming job (PID $STREAMING_JOB_PID) has died. ---"
     echo "--- Exiting container to force a full restart. ---"
@@ -35,11 +33,11 @@ while true; do
 
   # Check exit code of batch job.
   if [ $? -ne 0 ]; then
-    echo "Spark batch job failed. Retrying in 1 minute..."
+    echo "Spark batch job failed. Retrying in 10 seconds..."
   else
-    echo "Batch job finished successfully. Sleeping for 1 minute..."
+    echo "Batch job finished successfully. Sleeping for 10 seconds..."
   fi
 
   # 6. Wait before the next loop
-  sleep 60
+  sleep 10
 done

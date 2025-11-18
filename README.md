@@ -12,10 +12,12 @@ Here is the final dashboard, which loads automatically on startup:
 ├── images/
 │   └── dashboard_preview.png
 ├── producer/
+│   ├── __init__.py
 │   ├── producer.py
 │   ├── requirements.txt
 │   ├── Dockerfile
 ├── spark/
+│   ├── __init__.py
 │   ├── spark_streaming.py
 │   ├── spark_batch.py
 │   ├── entrypoint.sh
@@ -23,7 +25,17 @@ Here is the final dashboard, which loads automatically on startup:
 ├── superset/
 │   ├── init_superset.sh
 │   └── my_dashboard_export.zip
+├── tests/
+│   ├── producer
+│   │   ├── __init__.py
+│   │   ├── producer_test.py
+│   ├── spark
+│   │   ├── __init__.py
+│   │   ├── test_spark_batch.py
+│   │   ├── test_spark_streaming.py
+│   ├── Dockerfile
 ├── docker-compose.yaml
+├── Dockerfile.test
 ├── postgres-multiple-db.sh
 └── README.md
 ```

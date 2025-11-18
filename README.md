@@ -110,6 +110,7 @@ Regular Startup: A normal startup takes 2-5 minutes for all services to stabiliz
 - Expect to wait 1-2 minutes after startup before data appears in your `bitcoin_gold_data` table and on the Superset dashboard.
 
 #### Service Endpoints
+###### * All usernames and passwords here are only defaults that can be made secret with .env file. For demonstration purposes I used defaults.
 - Superset (Dashboard):
     - URL: `http://localhost:8088`
     - User: `admin`

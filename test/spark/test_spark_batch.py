@@ -6,6 +6,7 @@ from datetime import datetime
 
 from spark.spark_batch import define_parquet_schema
 
+
 def test_define_parquet_schema():
     """Test Parquet schema definition"""
     from pyspark.sql.types import StructType, TimestampType

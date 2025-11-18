@@ -9,6 +9,8 @@ Here is the final dashboard, which loads automatically on startup:
 ### Project Structure
 ```
 .
+├── data/
+│   └── bitcoin_data.csv
 ├── images/
 │   └── dashboard_preview.png
 ├── producer/

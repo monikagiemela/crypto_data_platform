@@ -119,3 +119,16 @@ Regular Startup: A normal startup takes 2-5 minutes for all services to stabiliz
     - Pass: `postgres`
     - Data DB: `crypto_db`
     - Superset DB: `superset`
+
+### Testing
+This project includes a suite of unit tests that can be run in a containerized environment.
+
+#### 1. Build the Test Image:
+```
+docker build -t crypto-tests -f Dockerfile.test .
+```
+
+#### 2. Run the Tests:
+```
+docker run --rm crypto-tests
+```

@@ -52,6 +52,8 @@ def create_spark_session():
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.optimizer.dynamicPartitionPruning.enabled", "true") \
+        .config("spark.driver.extraJavaOptions", "--add-opens=java.base/java.lang=ALL-UNNAMED") \
+        .config("spark.executor.extraJavaOptions", "--add-opens=java.base/java.lang=ALL-UNNAMED") \
         .getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     logger.info("Spark session created successfully")

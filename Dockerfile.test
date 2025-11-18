@@ -1,0 +1,28 @@
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Java
+RUN apt-get update && apt-get install -y openjdk-21-jre-headless
+
+# Copy the project files into the container
+COPY . .
+
+RUN pip install --no-cache-dir -r producer/requirements.txt
+RUN pip install --no-cache-dir -r spark/requirements.txt
+RUN pip install --no-cache-dir pytest pytest-mock
+
+ENV KAFKA_BOOTSTRAP_SERVERS="fake_kafka:9092"
+ENV MINIO_ENDPOINT="fake_minio:9000"
+ENV MINIO_ACCESS_KEY="minioadmin"
+ENV MINIO_SECRET_KEY="minioadmin"
+ENV MINIO_BUCKET="bitcoin-data"
+ENV POSTGRES_HOST="fake_postgres"
+ENV POSTGRES_PORT="5432"
+ENV POSTGRES_DB="crypto_db"
+ENV POSTGRES_USER="postgres"
+ENV POSTGRES_PASSWORD="postgres"
+ENV PYTHONPATH "${PYTHONPATH}:/app"
+
+CMD ["pytest", "test"]

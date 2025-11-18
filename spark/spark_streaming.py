@@ -40,6 +40,8 @@ def create_spark_session():
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
         .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_LOCATION) \
         .config("spark.sql.adaptive.enabled", "false") \
+        .config("spark.driver.extraJavaOptions", "--add-opens=java.base/java.lang=ALL-UNNAMED") \
+        .config("spark.executor.extraJavaOptions", "--add-opens=java.base/java.lang=ALL-UNNAMED") \
         .getOrCreate()
 
     spark.sparkContext.setLogLevel("WARN")

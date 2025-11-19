@@ -70,9 +70,6 @@ def test_main(mock_ensure_path, mock_process_stream, mock_read_kafka, mock_creat
     # Mock the streaming query
     mock_query = MagicMock()
     mock_processed_df.writeStream.foreachBatch.return_value.option.return_value.trigger.return_value.start.return_value = mock_query
-
-    # Since awaitTermination will block, we need to mock it to raise an exception
-    # to exit the loop in the main function.
     mock_query.awaitTermination.side_effect = KeyboardInterrupt
 
     try:
